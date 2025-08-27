@@ -20,11 +20,13 @@
 
 from api.utils.log_utils import init_root_logger
 from plugin import GlobalPluginManager
+
 init_root_logger("ragflow_server")
 
 import logging
 import os
 import signal
+import subprocess
 import sys
 import time
 import traceback
@@ -47,8 +49,10 @@ from rag.utils.mcp_tool_call_conn import shutdown_all_mcp_sessions
 from rag.utils.redis_conn import RedisDistributedLock
 
 stop_event = threading.Event()
+TASK_EXEC_PROCS = []
 
-RAGFLOW_DEBUGPY_LISTEN = int(os.environ.get('RAGFLOW_DEBUGPY_LISTEN', "0"))
+RAGFLOW_DEBUGPY_LISTEN = int(os.environ.get("RAGFLOW_DEBUGPY_LISTEN", "0"))
+
 
 def update_progress():
     lock_value = str(uuid.uuid4())
@@ -68,14 +72,28 @@ def update_progress():
                 logging.exception("update_progress exception")
             stop_event.wait(6)
 
+
 def signal_handler(sig, frame):
     logging.info("Received interrupt signal, shutting down...")
     shutdown_all_mcp_sessions()
     stop_event.set()
+    # terminate task executors
+    global TASK_EXEC_PROCS
+    for p in TASK_EXEC_PROCS:
+        try:
+            if p.poll() is None:
+                if sys.platform != "win32":
+                    p.terminate()
+                else:
+                    p.kill()
+        except Exception:
+            logging.exception("terminate task executor failed")
+    # wait a moment for children to exit
     time.sleep(1)
     sys.exit(0)
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     logging.info(r"""
         ____   ___    ______ ______ __
        / __ \ /   |  / ____// ____// /____  _      __
@@ -84,12 +102,8 @@ if __name__ == '__main__':
     /_/ |_|/_/  |_|\____//_/    /_/ \____/ |__/|__/
 
     """)
-    logging.info(
-        f'RAGFlow version: {get_ragflow_version()}'
-    )
-    logging.info(
-        f'project base: {utils.file_utils.get_project_base_directory()}'
-    )
+    logging.info(f"RAGFlow version: {get_ragflow_version()}")
+    logging.info(f"project base: {utils.file_utils.get_project_base_directory()}")
     show_configs()
     settings.init_settings()
     print_rag_settings()
@@ -97,21 +111,57 @@ if __name__ == '__main__':
     if RAGFLOW_DEBUGPY_LISTEN > 0:
         logging.info(f"debugpy listen on {RAGFLOW_DEBUGPY_LISTEN}")
         import debugpy
+
         debugpy.listen(("0.0.0.0", RAGFLOW_DEBUGPY_LISTEN))
 
     # init db
     init_web_db()
     init_web_data()
+
+    # auto start task executors (bind with server lifecycle)
+    def launch_task_executors():
+        try:
+            num = int(os.environ.get("TASK_EXECUTOR_NUM", os.environ.get("WORKER_NUM", "1")))
+        except Exception:
+            num = 1
+        auto_start = int(os.environ.get("START_TASK_EXECUTOR", os.environ.get("AUTO_START_WORKER", "1")))
+        if auto_start <= 0 or num <= 0:
+            logging.info("Skip auto starting task executors.")
+            return
+        py = sys.executable
+        mod = "rag.svr.task_executor"
+        logging.info(f"Auto starting {num} task executor(s)...")
+        for i in range(num):
+            try:
+                # ensure working directory and log files
+                base_dir = utils.file_utils.get_project_base_directory()
+                log_dir = os.path.join(base_dir, "logs")
+                os.makedirs(log_dir, exist_ok=True)
+                stdout_path = os.path.join(log_dir, f"task_executor_{i}.out.log")
+                stderr_path = os.path.join(log_dir, f"task_executor_{i}.err.log")
+                stdout_f = open(stdout_path, "ab", buffering=0)
+                stderr_f = open(stderr_path, "ab", buffering=0)
+                env = os.environ.copy()
+                env.setdefault("PYTHONUNBUFFERED", "1")
+                env.setdefault("START_TASK_EXECUTOR", "0")  # avoid child spawning children
+                p = subprocess.Popen(
+                    [py, "-m", mod, str(i)],
+                    cwd=base_dir,
+                    stdout=stdout_f,
+                    stderr=stderr_f,
+                    env=env,
+                )
+                TASK_EXEC_PROCS.append(p)
+                logging.info(f"Started task executor #{i} (pid={p.pid})")
+            except Exception:
+                logging.exception(f"Failed to start task executor #{i}")
+
     # init runtime config
     import argparse
 
     parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--version", default=False, help="RAGFlow version", action="store_true"
-    )
-    parser.add_argument(
-        "--debug", default=False, help="debug mode", action="store_true"
-    )
+    parser.add_argument("--version", default=False, help="RAGFlow version", action="store_true")
+    parser.add_argument("--debug", default=False, help="debug mode", action="store_true")
     args = parser.parse_args()
     if args.version:
         print(get_ragflow_version())
@@ -125,6 +175,9 @@ if __name__ == '__main__':
     RuntimeConfig.init_config(JOB_SERVER_HOST=settings.HOST_IP, HTTP_PORT=settings.HOST_PORT)
 
     GlobalPluginManager.load_plugins()
+
+    # launch workers after configs
+    launch_task_executors()
 
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
@@ -150,7 +203,6 @@ if __name__ == '__main__':
         app.config["MAIL_PASSWORD"] = settings.MAIL_PASSWORD
         app.config["MAIL_DEFAULT_SENDER"] = settings.MAIL_DEFAULT_SENDER
         smtp_mail_server.init_app(app)
-
 
     # start http server
     try:

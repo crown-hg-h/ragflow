@@ -5,38 +5,37 @@ mysql:
   name: 'rag_flow'
   user: 'root'
   password: 'infini_rag_flow'
-  host: 'localhost'
+  host: '192.168.14.190'
   port: 5455
   max_connections: 900
   stale_timeout: 300
-  max_allowed_packet: 1073741824
 minio:
   user: 'rag_flow'
   password: 'infini_rag_flow'
-  host: 'localhost:9000'
+  host: '192.168.14.190:9000'
 es:
-  hosts: 'http://localhost:1200'
+  hosts: 'http://192.168.14.190:1200'
   username: 'elastic'
   password: 'infini_rag_flow'
 os:
-  hosts: 'http://localhost:1201'
+  hosts: 'http://192.168.14.190:1201'
   username: 'admin'
   password: 'infini_rag_flow_OS_01'
 infinity:
-  uri: 'localhost:23817'
+  uri: '192.168.14.190:23817'
   db_name: 'default_db'
 redis:
   db: 1
   password: 'infini_rag_flow'
-  host: 'localhost:6379'
-# postgres:
-#   name: 'rag_flow'
-#   user: 'rag_flow'
-#   password: 'infini_rag_flow'
-#   host: 'postgres'
-#   port: 5432
-#   max_connections: 100
-#   stale_timeout: 30
+  host: '192.168.14.190:6379'
+postgres:
+  name: 'rag_flow'
+  user: 'gaussdb'
+  password: 'Xpr623l@KpLcXVfz4'
+  host: '192.168.23.246'
+  port: 15432
+  max_connections: 100
+  stale_timeout: 30
 # s3:
 #   access_key: 'access_key'
 #   secret_key: 'secret_key'
@@ -58,27 +57,10 @@ redis:
 #   secret: 'secret'
 #   tenant_id: 'tenant_id'
 #   container_name: 'container_name'
-# The OSS object storage uses the MySQL configuration above by default. If you need to switch to another object storage service, please uncomment and configure the following parameters.
-# opendal:
-#   scheme: 'mysql'  # Storage type, such as s3, oss, azure, etc.
-#   config:
-#     oss_table: 'opendal_storage'
 # user_default_llm:
-#   factory: 'BAAI'
-#   api_key: 'backup'
-#   base_url: 'backup_base_url'
-#   default_models:
-#     chat_model:
-#       name: 'qwen2.5-7b-instruct'
-#       factory: 'xxxx'
-#       api_key: 'xxxx'
-#       base_url: 'https://api.xx.com'
-#     embedding_model:
-#       name: 'bge-m3'
-#     rerank_model: 'bge-reranker-v2'
-#     asr_model:
-#       model: 'whisper-large-v3' # alias of name
-#     image2text_model: ''
+#   factory: 'Tongyi-Qianwen'
+#   api_key: 'sk-xxxxxxxxxxxxx'
+#   base_url: ''
 # oauth:
 #   oauth2:
 #     display_name: "OAuth2"
@@ -113,14 +95,3 @@ redis:
 #   switch: false
 #   component: false
 #   dataset: false
-# smtp:
-#   mail_server: ""
-#   mail_port: 465
-#   mail_use_ssl: true
-#   mail_use_tls: false
-#   mail_username: ""
-#   mail_password: ""
-#   mail_default_sender:
-#     - "RAGFlow" # display name
-#     - "" # sender email address
-#   mail_frontend_url: "https://your-frontend.example.com"

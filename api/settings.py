@@ -50,8 +50,22 @@ HOST_PORT = None
 SECRET_KEY = None
 FACTORY_LLM_INFOS = None
 
-DATABASE_TYPE = os.getenv("DB_TYPE", "mysql")
-DATABASE = decrypt_database_config(name=DATABASE_TYPE)
+
+def _normalize_db_type(db_type: str) -> str:
+    m = {
+        "mysql": "mysql",
+        "postgres": "postgres",
+        "postgresql": "postgres",
+        "gaussdb": "postgres",
+        "opengauss": "postgres",
+    }
+    return m.get((db_type or "").lower(), (db_type or "mysql").lower())
+
+
+DATABASE_TYPE = _normalize_db_type(os.getenv("DB_TYPE", "mysql"))
+# map logical type to config section name in conf/service_conf.yaml
+_CONF_SECTION = "postgres" if DATABASE_TYPE == "postgres" else "mysql"
+DATABASE = decrypt_database_config(name=_CONF_SECTION)
 
 # authentication
 AUTHENTICATION_CONF = None
@@ -82,7 +96,7 @@ BUILTIN_EMBEDDING_MODELS = ["BAAI/bge-large-zh-v1.5@BAAI", "maidalun1020/bce-emb
 SMTP_CONF = None
 MAIL_SERVER = ""
 MAIL_PORT = 000
-MAIL_USE_SSL= True
+MAIL_USE_SSL = True
 MAIL_USE_TLS = False
 MAIL_USERNAME = ""
 MAIL_PASSWORD = ""
@@ -111,8 +125,9 @@ def get_or_create_secret_key():
 def init_settings():
     global LLM, LLM_FACTORY, LLM_BASE_URL, LIGHTEN, DATABASE_TYPE, DATABASE, FACTORY_LLM_INFOS, REGISTER_ENABLED
     LIGHTEN = int(os.environ.get("LIGHTEN", "0"))
-    DATABASE_TYPE = os.getenv("DB_TYPE", "mysql")
-    DATABASE = decrypt_database_config(name=DATABASE_TYPE)
+    DATABASE_TYPE = _normalize_db_type(os.getenv("DB_TYPE", "mysql"))
+    _CONF_SECTION = "postgres" if DATABASE_TYPE == "postgres" else "mysql"
+    DATABASE = decrypt_database_config(name=_CONF_SECTION)
     LLM = get_base_config("user_default_llm", {}) or {}
     LLM_DEFAULT_MODELS = LLM.get("default_models", {}) or {}
     LLM_FACTORY = LLM.get("factory", "") or ""

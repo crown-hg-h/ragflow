@@ -245,22 +245,21 @@ class JsonSerializedField(SerializedField):
 
 class RetryingPooledMySQLDatabase(PooledMySQLDatabase):
     def __init__(self, *args, **kwargs):
-        self.max_retries = kwargs.pop('max_retries', 5)
-        self.retry_delay = kwargs.pop('retry_delay', 1)
+        self.max_retries = kwargs.pop("max_retries", 5)
+        self.retry_delay = kwargs.pop("retry_delay", 1)
         super().__init__(*args, **kwargs)
 
     def execute_sql(self, sql, params=None, commit=True):
         from peewee import OperationalError
+
         for attempt in range(self.max_retries + 1):
             try:
                 return super().execute_sql(sql, params, commit)
             except OperationalError as e:
                 if e.args[0] in (2013, 2006) and attempt < self.max_retries:
-                    logging.warning(
-                        f"Lost connection (attempt {attempt+1}/{self.max_retries}): {e}"
-                    )
+                    logging.warning(f"Lost connection (attempt {attempt + 1}/{self.max_retries}): {e}")
                     self._handle_connection_loss()
-                    time.sleep(self.retry_delay * (2 ** attempt))
+                    time.sleep(self.retry_delay * (2**attempt))
                 else:
                     logging.error(f"DB execution failure: {e}")
                     raise
@@ -272,16 +271,15 @@ class RetryingPooledMySQLDatabase(PooledMySQLDatabase):
 
     def begin(self):
         from peewee import OperationalError
+
         for attempt in range(self.max_retries + 1):
             try:
                 return super().begin()
             except OperationalError as e:
                 if e.args[0] in (2013, 2006) and attempt < self.max_retries:
-                    logging.warning(
-                        f"Lost connection during transaction (attempt {attempt+1}/{self.max_retries})"
-                    )
+                    logging.warning(f"Lost connection during transaction (attempt {attempt + 1}/{self.max_retries})")
                     self._handle_connection_loss()
-                    time.sleep(self.retry_delay * (2 ** attempt))
+                    time.sleep(self.retry_delay * (2**attempt))
                 else:
                     raise
 
@@ -301,6 +299,7 @@ class BaseDataBase:
     def __init__(self):
         database_config = settings.DATABASE.copy()
         db_name = database_config.pop("name")
+        # Peewee expects keys host, port, user, password, etc. For postgres, ensure correct driver via psycopg2 is present.
         self.database_connection = PooledDatabase[settings.DATABASE_TYPE.upper()].value(db_name, **database_config)
         logging.info("init database on cluster mode successfully")
 
@@ -908,6 +907,57 @@ class Search(DataBaseModel):
 def migrate_db():
     logging.disable(logging.ERROR)
     migrator = DatabaseMigrator[settings.DATABASE_TYPE.upper()].value(DB)
+
+    # GaussDB/openGauss compatibility: fix legacy typo column 'process_duation'
+    def _col_exists(table: str, col: str) -> bool:
+        try:
+            sql = "SELECT 1 FROM information_schema.columns WHERE table_name=%s AND column_name=%s LIMIT 1"
+            cur = DB.execute_sql(sql, (table, col))
+            return cur.fetchone() is not None
+        except Exception:
+            return False
+
+    def _ensure_duration_column(table: str):
+        try:
+            has_duation = _col_exists(table, "process_duation")
+            has_duration = _col_exists(table, "process_duration")
+            if has_duation and not has_duration:
+                try:
+                    DB.execute_sql(f"ALTER TABLE {table} RENAME COLUMN process_duation TO process_duration")
+                    has_duration = True
+                    has_duation = _col_exists(table, "process_duation")
+                except Exception:
+                    pass
+            if not has_duration:
+                try:
+                    DB.execute_sql(f"ALTER TABLE {table} ADD COLUMN process_duration DOUBLE PRECISION DEFAULT 0")
+                    has_duration = True
+                except Exception:
+                    pass
+            if has_duation:
+                try:
+                    DB.execute_sql(f"UPDATE {table} SET process_duration = COALESCE(process_duration, 0) + COALESCE(process_duation, 0)")
+                except Exception:
+                    pass
+                try:
+                    DB.execute_sql(f"ALTER TABLE {table} DROP COLUMN process_duation")
+                except Exception:
+                    pass
+            if has_duration:
+                try:
+                    DB.execute_sql(f"ALTER TABLE {table} ALTER COLUMN process_duration SET DEFAULT 0")
+                except Exception:
+                    pass
+                try:
+                    DB.execute_sql(f"ALTER TABLE {table} ALTER COLUMN process_duration SET NOT NULL")
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+    # Run compatibility fix before regular migrator ops
+    _ensure_duration_column("document")
+    _ensure_duration_column("task")
     try:
         migrate(migrator.add_column("file", "source_type", CharField(max_length=128, null=False, default="", help_text="where dose this document come from", index=True)))
     except Exception:
